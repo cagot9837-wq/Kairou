@@ -1,9 +1,11 @@
-name: Gerar APK Android
+
+name: Gerar APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -12,67 +14,95 @@ jobs:
   build:
     name: Gerar APK
     runs-on: ubuntu-24.04
+
     steps:
-      - name: Baixar repositório
+      - name: Baixar o código
         uses: actions/checkout@v4
 
       - name: Configurar Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Configurar Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+          accept-android-sdk-licenses: false
+          log-accepted-android-sdk-licenses: false
 
-      - name: Aceitar licenças e instalar componentes necessários
+      - name: Aceitar licenças e instalar SDK
         shell: bash
         run: |
           set -euo pipefail
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -n 1)"
-          fi
-          if [ -z "${SDKMANAGER:-}" ] || [ ! -x "$SDKMANAGER" ]; then
-            echo "ERRO: sdkmanager não encontrado no Android SDK."
+
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+
+          if [ -z "$SDK_ROOT" ]; then
+            echo "::error::Android SDK não encontrado."
             exit 1
           fi
 
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME"             "platform-tools"             "platforms;android-35"             "build-tools;35.0.0"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager não encontrado."
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" \
+            --sdk_root="$SDK_ROOT" --licenses
+
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Verificar projeto Android
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f settings.gradle ] && \
+             [ ! -f settings.gradle.kts ]; then
+            echo "::error::Arquivo settings.gradle não encontrado."
+            exit 1
+          fi
+
+          if [ ! -f app/build.gradle ] && \
+             [ ! -f app/build.gradle.kts ]; then
+            echo "::error::Configuração do módulo app não encontrada."
+            exit 1
+          fi
+
+          if [ ! -f gradlew ]; then
+            echo "::error::Gradle Wrapper gradlew não encontrado."
+            exit 1
+          fi
 
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Verificar estrutura do projeto
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f settings.gradle -o -f settings.gradle.kts
-          test -f build.gradle -o -f build.gradle.kts
-          test -f app/build.gradle -o -f app/build.gradle.kts
-          echo "Estrutura Android encontrada."
 
       - name: Compilar APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Verificar APK
         shell: bash
         run: |
-          set -euo pipefail
-          gradle --no-daemon --stacktrace assembleDebug
+          if [ ! -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            echo "::error::APK não foi gerado."
+            find . -type f -name '*.apk' -print || true
+            exit 1
+          fi
 
-      - name: Verificar APK gerado
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          ls -lh "$APK"
-
-      - name: Publicar APK
+      - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
-          name: pool-trajectory-debug-apk
+          name: Kairou-APK-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
