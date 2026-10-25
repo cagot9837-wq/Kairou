@@ -1,3 +1,24 @@
+name: Gerar APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Preparar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Preparar Android SDK e aceitar licenças
         uses: android-actions/setup-android@v4
@@ -10,8 +31,32 @@
         shell: bash
         run: |
           set -euo pipefail
-
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
+
+      - name: Dar permissão ao Gradle
+        run: |
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+          fi
+
+      - name: Compilar APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f ./gradlew ]; then
+            ./gradlew assembleDebug
+          else
+            echo "ERRO: arquivo gradlew não encontrado na raiz do projeto."
+            exit 1
+          fi
+
+      - name: Disponibilizar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: aplicativo-apk
+          path: |
+            **/build/outputs/apk/**/*.apk
+          if-no-files-found: error
